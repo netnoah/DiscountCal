@@ -1,6 +1,6 @@
 # app.py
 import time
-from datetime import date, datetime
+from datetime import date, datetime, time as dt_time
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -22,7 +22,7 @@ def is_trading_hours() -> bool:
     if now.weekday() >= 5:
         return False
     t = now.time()
-    return (time(9, 0) <= t <= time(15, 0)) or (time(21, 0) <= t <= time(23, 0))
+    return (dt_time(9, 0) <= t <= dt_time(15, 0)) or (dt_time(21, 0) <= t <= dt_time(23, 0))
 
 
 @st.cache_resource

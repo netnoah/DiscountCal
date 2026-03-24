@@ -9,7 +9,7 @@ class BasisStorage:
     def __init__(self, db_path: str = "data/basis_history.db"):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS basis_history (
                 date TEXT NOT NULL,
