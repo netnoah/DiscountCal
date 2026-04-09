@@ -1,8 +1,11 @@
 # data_fetcher.py
+import logging
 from datetime import date, timedelta
 
 import akshare as ak
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # Default moisture content for Australian iron ore (PB fines ~8%)
 DEFAULT_MOISTURE_PCT = 8.0
@@ -42,7 +45,8 @@ def fetch_active_contracts() -> list[str]:
             if code:
                 contracts.append(code)
         return sorted(contracts)
-    except Exception:
+    except Exception as e:
+        logger.error("fetch_active_contracts failed: %s", e, exc_info=True)
         return []
 
 
@@ -71,7 +75,8 @@ def fetch_futures_quotes(contracts: list[str]) -> pd.DataFrame:
         result = result[result["symbol"].notna()]
         result["delivery_date"] = result["symbol"].apply(_parse_delivery_date)
         return result
-    except Exception:
+    except Exception as e:
+        logger.error("fetch_futures_quotes failed: %s", e, exc_info=True)
         return pd.DataFrame(columns=["symbol", "current_price", "delivery_date"])
 
 

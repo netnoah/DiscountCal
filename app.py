@@ -1,4 +1,5 @@
 # app.py
+import logging
 import time
 from datetime import date, datetime, time as dt_time
 
@@ -12,6 +13,8 @@ from data_fetcher import (
     fetch_futures_quotes,
 )
 from storage import BasisStorage
+
+logging.basicConfig(level=logging.DEBUG)
 
 DB_PATH = "data/basis_history.db"
 DEFAULT_REFRESH_SECONDS = 30
@@ -48,9 +51,8 @@ def save_today_data(storage: BasisStorage) -> float | None:
     """
     today_str = date.today().isoformat()
     if storage.date_exists(today_str):
-        contracts = storage.get_all_contracts()
-        if contracts:
-            history = storage.get_history(contracts[0], start_date=today_str)
+        for contract in storage.get_all_contracts():
+            history = storage.get_history(contract, start_date=today_str)
             if not history.empty:
                 return float(history.iloc[0]["spot_price"])
         return None
