@@ -30,8 +30,8 @@ def _find_near_contract_price(futures_df: pd.DataFrame) -> float | None:
     return float(price) if pd.notna(price) and price > 0 else None
 
 
-def build_markdown_message() -> str | None:
-    """Fetch data and build WeChat Work markdown message."""
+def build_text_message() -> str | None:
+    """Fetch data and build WeChat Work text message (compatible with personal WeChat)."""
     contracts = fetch_active_contracts()
     if not contracts:
         return None
@@ -56,25 +56,19 @@ def build_markdown_message() -> str | None:
     today_str = date.today().strftime("%Y-%m-%d")
 
     lines = [
-        f"## 铁矿石期货贴水日报 ({today_str})",
-        f"",
-        f"**近月基准价：** {near_price:.1f} 元/吨",
-        f"",
+        f"铁矿石期货贴水日报 ({today_str})",
+        f"近月基准价：{near_price:.1f} 元/吨",
+        f"{'─'*30}",
     ]
-
-    # WeChat markdown table
-    header = "| 合约 | 期货价 | 价差 | 年化贴水率 |"
-    separator = "|------|--------|------|-----------|"
-    lines.append(header)
-    lines.append(separator)
 
     for _, row in basis_table.iterrows():
         contract = row["contract"]
         fp = row["futures_price"]
+        days = row["days_to_delivery"]
         spread = row["spread"]
         rate = row["annualized_basis_rate"]
         rate_str = f"{rate:.2f}%" if pd.notna(rate) else "N/A"
-        lines.append(f"| {contract} | {fp:.1f} | {spread:.1f} | {rate_str} |")
+        lines.append(f"{contract}  价格:{fp:>7.1f}  价差:{spread:>6.1f}  贴水率:{rate_str:>7}  距交割:{int(days):>3}天")
 
     return "\n".join(lines)
 
@@ -86,8 +80,8 @@ def send_webhook(content: str) -> bool:
         return False
 
     payload = json.dumps({
-        "msgtype": "markdown",
-        "markdown": {"content": content},
+        "msgtype": "text",
+        "text": {"content": content},
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -110,7 +104,7 @@ def send_webhook(content: str) -> bool:
 
 
 def main():
-    message = build_markdown_message()
+    message = build_text_message()
     if not message:
         print("No basis data available (possibly non-trading day)")
         return
