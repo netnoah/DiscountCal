@@ -31,7 +31,7 @@ def _find_near_contract_price(futures_df: pd.DataFrame) -> float | None:
 
 
 def build_text_message() -> str | None:
-    """Fetch data and build WeChat Work text message (compatible with personal WeChat)."""
+    """Fetch data and build WeChat text message (compatible with personal WeChat)."""
     contracts = fetch_active_contracts()
     if not contracts:
         return None
@@ -53,28 +53,27 @@ def build_text_message() -> str | None:
     if basis_table.empty:
         return None
 
-    today_str = date.today().strftime("%Y-%m-%d")
+    today_str = date.today().strftime("%m-%d")
 
     lines = [
-        f"铁矿石期货贴水日报 ({today_str})",
-        f"近月基准价：{near_price:.1f} 元/吨",
-        f"{'─'*30}",
+        f"【铁矿石贴水日报{today_str}】",
+        f"基准价 {near_price:.1f}元/吨",
+        "",
     ]
 
     for _, row in basis_table.iterrows():
         contract = row["contract"]
         fp = row["futures_price"]
-        days = row["days_to_delivery"]
-        spread = row["spread"]
+        days = int(row["days_to_delivery"])
         rate = row["annualized_basis_rate"]
         rate_str = f"{rate:.2f}%" if pd.notna(rate) else "N/A"
-        lines.append(f"{contract}  价格:{fp:>7.1f}  价差:{spread:>6.1f}  贴水率:{rate_str:>7}  距交割:{int(days):>3}天")
+        lines.append(f"{contract} {fp:.1f} 贴水{rate_str} {days}天")
 
     return "\n".join(lines)
 
 
 def send_webhook(content: str) -> bool:
-    """Send markdown message to WeChat Work webhook."""
+    """Send text message to WeChat Work webhook."""
     if not WEBHOOK_URL:
         print("ERROR: WECHAT_WEBHOOK_URL not set")
         return False
