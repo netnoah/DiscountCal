@@ -5,7 +5,7 @@ from pathlib import Path
 
 import openpyxl
 
-from position import load_positions, save_captured_basis
+from position import load_positions, save_captured_basis, calculate_position_return, build_position_summary, compute_position_returns
 
 
 class TestLoadPositions:
@@ -118,3 +118,180 @@ class TestSaveCapturedBasis:
 
         positions = load_positions(filepath)
         assert positions[0]["captured_basis"] == 25.0
+
+
+class TestCalculatePositionReturn:
+    def _make_position(self, **overrides):
+        defaults = {
+            "row_index": 2,
+            "contract": "I2609",
+            "buy_date": date(2026, 4, 10),
+            "buy_price": 650.0,
+            "base_price_at_buy": 720.0,
+            "sold": False,
+            "captured_basis": None,
+        }
+        defaults.update(overrides)
+        return defaults
+
+    def test_calculates_all_metrics(self):
+        pos = self._make_position()
+        result = calculate_position_return(
+            position=pos,
+            current_futures_price=665.0,
+            current_base_price=730.0,
+            reference_date=date(2026, 4, 25),
+        )
+        assert result["contract"] == "I2609"
+        assert result["buy_price"] == 650.0
+        assert result["current_price"] == 665.0
+        assert result["initial_basis"] == 70.0
+        assert result["current_basis"] == 65.0
+        assert result["captured_basis"] == 5.0
+        assert abs(result["convergence_pct"] - (5 / 70 * 100)) < 0.01
+        assert result["holding_days"] == 15
+        expected_annualized = 5 / 650 * 365 / 15 * 100
+        assert abs(result["annualized_return"] - expected_annualized) < 0.01
+        assert result["pnl"] == 15.0
+
+    def test_zero_holding_days_returns_none_annualized(self):
+        pos = self._make_position(buy_date=date(2026, 4, 25))
+        result = calculate_position_return(
+            position=pos,
+            current_futures_price=665.0,
+            current_base_price=730.0,
+            reference_date=date(2026, 4, 25),
+        )
+        assert result["annualized_return"] is None
+        assert result["holding_days"] == 0
+
+    def test_zero_initial_basis_returns_none_convergence(self):
+        pos = self._make_position(buy_price=720.0, base_price_at_buy=720.0)
+        result = calculate_position_return(
+            position=pos,
+            current_futures_price=720.0,
+            current_base_price=720.0,
+            reference_date=date(2026, 4, 25),
+        )
+        assert result["convergence_pct"] is None
+
+    def test_negative_basis_still_calculates(self):
+        pos = self._make_position(buy_price=750.0, base_price_at_buy=720.0)
+        result = calculate_position_return(
+            position=pos,
+            current_futures_price=740.0,
+            current_base_price=730.0,
+            reference_date=date(2026, 4, 25),
+        )
+        assert result["initial_basis"] == -30.0
+        assert result["current_basis"] == -10.0
+        assert result["captured_basis"] == -20.0
+
+
+class TestBuildPositionSummary:
+    def test_formats_text_for_wechat(self):
+        returns = [
+            {
+                "contract": "I2609",
+                "buy_price": 650.0,
+                "current_price": 665.0,
+                "captured_basis": 5.0,
+                "convergence_pct": 7.14,
+                "annualized_return": 18.72,
+                "pnl": 15.0,
+                "sold": False,
+            },
+            {
+                "contract": "I2612",
+                "buy_price": 620.0,
+                "current_price": 635.0,
+                "captured_basis": 10.0,
+                "convergence_pct": 66.67,
+                "annualized_return": 98.17,
+                "pnl": 15.0,
+                "sold": False,
+            },
+        ]
+        result = build_position_summary(returns, total_count=3)
+        assert "I2609" in result
+        assert "I2612" in result
+        assert "650.0" in result
+        assert "持仓数: 3" in result
+        assert "未平仓: 2" in result
+
+    def test_empty_returns_empty_string(self):
+        result = build_position_summary([], total_count=0)
+        assert result == ""
+
+    def test_hides_sold_positions_in_detail(self):
+        returns = [
+            {
+                "contract": "I2609",
+                "buy_price": 650.0,
+                "current_price": 665.0,
+                "captured_basis": 5.0,
+                "convergence_pct": 7.14,
+                "annualized_return": 18.72,
+                "pnl": 15.0,
+                "sold": False,
+            },
+            {
+                "contract": "I2605",
+                "buy_price": 680.0,
+                "current_price": 700.0,
+                "captured_basis": 20.0,
+                "convergence_pct": 100.0,
+                "annualized_return": 50.0,
+                "pnl": 20.0,
+                "sold": True,
+            },
+        ]
+        result = build_position_summary(returns, total_count=2)
+        assert "I2609" in result
+        assert "I2605" not in result
+        assert "持仓数: 2" in result
+        assert "未平仓: 1" in result
+
+
+class TestComputePositionReturns:
+    def test_filters_unsold_and_matches_prices(self, tmp_path):
+        positions = [
+            {"row_index": 2, "contract": "I2609", "buy_date": date(2026, 4, 10),
+             "buy_price": 650.0, "base_price_at_buy": 720.0, "sold": False, "captured_basis": None},
+            {"row_index": 3, "contract": "I2605", "buy_date": date(2026, 3, 15),
+             "buy_price": 680.0, "base_price_at_buy": 710.0, "sold": True, "captured_basis": None},
+            {"row_index": 4, "contract": "I2612", "buy_date": date(2026, 4, 12),
+             "buy_price": 630.0, "base_price_at_buy": 720.0, "sold": False, "captured_basis": None},
+        ]
+        price_map = {"I2609": 665.0, "I2612": 635.0, "I2605": 700.0}
+        near_price = 730.0
+
+        returns = compute_position_returns(positions, price_map, near_price)
+        assert len(returns) == 3  # 2 unsold + 1 sold without captured_basis
+        unsold = [r for r in returns if not r["sold"]]
+        assert len(unsold) == 2
+        assert returns[0]["contract"] == "I2609"
+        assert returns[1]["contract"] == "I2605"
+        assert returns[2]["contract"] == "I2612"
+
+    def test_skips_positions_with_no_matching_price(self):
+        positions = [
+            {"row_index": 2, "contract": "I2701", "buy_date": date(2026, 4, 10),
+             "buy_price": 600.0, "base_price_at_buy": 700.0, "sold": False, "captured_basis": None},
+        ]
+        price_map = {"I2609": 665.0}
+        near_price = 730.0
+
+        returns = compute_position_returns(positions, price_map, near_price)
+        assert len(returns) == 0
+
+    def test_skips_sold_with_frozen_captured_basis(self):
+        positions = [
+            {"row_index": 2, "contract": "I2605", "buy_date": date(2026, 3, 15),
+             "buy_price": 680.0, "base_price_at_buy": 710.0, "sold": True, "captured_basis": 25.0},
+        ]
+        price_map = {"I2605": 700.0}
+        near_price = 730.0
+
+        returns = compute_position_returns(positions, price_map, near_price)
+        assert len(returns) == 0

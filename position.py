@@ -70,3 +70,118 @@ def save_captured_basis(filepath: str, row_index: int, value: float) -> None:
     ws.cell(row=row_index, column=6, value=value)
     wb.save(filepath)
     wb.close()
+
+
+def calculate_position_return(
+    position: dict,
+    current_futures_price: float,
+    current_base_price: float,
+    reference_date: date | None = None,
+) -> dict:
+    """Calculate captured basis metrics for a single position."""
+    if reference_date is None:
+        reference_date = date.today()
+
+    buy_price = position["buy_price"]
+    base_at_buy = position["base_price_at_buy"]
+    buy_date = position["buy_date"]
+
+    initial_basis = base_at_buy - buy_price
+    current_basis = current_base_price - current_futures_price
+    captured = initial_basis - current_basis
+
+    holding_days = (reference_date - buy_date).days
+
+    if holding_days > 0:
+        annualized_return = captured / buy_price * 365 / holding_days * 100
+    else:
+        annualized_return = None
+
+    if initial_basis != 0:
+        convergence_pct = captured / initial_basis * 100
+    else:
+        convergence_pct = None
+
+    return {
+        "contract": position["contract"],
+        "buy_price": buy_price,
+        "current_price": current_futures_price,
+        "initial_basis": round(initial_basis, 2),
+        "current_basis": round(current_basis, 2),
+        "captured_basis": round(captured, 2),
+        "convergence_pct": round(convergence_pct, 2) if convergence_pct is not None else None,
+        "holding_days": holding_days,
+        "annualized_return": round(annualized_return, 2) if annualized_return is not None else None,
+        "pnl": round(current_futures_price - buy_price, 2),
+        "sold": position["sold"],
+    }
+
+
+def build_position_summary(
+    position_returns: list[dict], total_count: int
+) -> str:
+    """Format position returns as WeChat notification text."""
+    if not position_returns:
+        return ""
+
+    lines = [
+        "",
+        "📊 我的持仓收益",
+        "────────────",
+    ]
+
+    unsold_count = 0
+    for r in position_returns:
+        if r.get("sold"):
+            continue
+        unsold_count += 1
+        lines.append(f"🔹 {r['contract']} | 买入 {r['buy_price']:.1f}")
+
+        captured = r["captured_basis"]
+        captured_str = f"{captured:.1f}" if captured is not None else "N/A"
+        lines.append(f"  当前价: {r['current_price']:.1f} | 已吃贴水: {captured_str}")
+
+        conv = r["convergence_pct"]
+        conv_str = f"{conv:.1f}%" if conv is not None else "N/A"
+        annual = r["annualized_return"]
+        annual_str = f"{annual:.1f}%" if annual is not None else "N/A"
+        pnl = r["pnl"]
+        pnl_str = f"{pnl:.1f}" if pnl is not None else "N/A"
+        lines.append(f"  收敛: {conv_str} | 年化: {annual_str} | 浮盈: {pnl_str}")
+
+    lines.append("────────────")
+    lines.append(f"📌 持仓数: {total_count} | 未平仓: {unsold_count}")
+
+    return "\n".join(lines)
+
+
+def compute_position_returns(
+    positions: list[dict],
+    price_map: dict[str, float],
+    near_price: float,
+) -> list[dict]:
+    """Calculate returns for all positions that have a matching price.
+
+    Returns results for:
+    - All unsold positions with a price match
+    - Sold positions with no captured_basis (for write-back)
+
+    Skips sold positions that already have captured_basis frozen.
+    """
+    results = []
+    for pos in positions:
+        # Skip sold positions that already have a frozen value
+        if pos["sold"] and pos["captured_basis"] is not None:
+            continue
+
+        current_price = price_map.get(pos["contract"])
+        if current_price is None:
+            continue
+
+        result = calculate_position_return(
+            position=pos,
+            current_futures_price=float(current_price),
+            current_base_price=near_price,
+        )
+        results.append(result)
+    return results
