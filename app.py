@@ -13,11 +13,14 @@ from data_fetcher import (
     fetch_futures_quotes,
 )
 from storage import BasisStorage
+from position import load_positions, calculate_position_return, compute_position_returns, save_captured_basis
 
 logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 DB_PATH = "data/basis_history.db"
 DEFAULT_REFRESH_SECONDS = 30
+POSITIONS_FILE = "data/positions.xlsx"
 
 
 def is_trading_hours() -> bool:
@@ -91,25 +94,18 @@ def save_today_data(storage: BasisStorage) -> float | None:
     return near_price
 
 
-def get_realtime_basis_table() -> pd.DataFrame:
-    """Build real-time basis table using near contract as base price."""
+def get_realtime_data() -> tuple[pd.DataFrame, float | None]:
+    """Fetch real-time futures data. Returns (futures_df, near_price)."""
     contracts = fetch_active_contracts()
     if not contracts:
-        return pd.DataFrame()
+        return pd.DataFrame(), None
 
     futures_df = fetch_futures_quotes(contracts)
     if futures_df.empty:
-        return pd.DataFrame()
+        return futures_df, None
 
     near_price = _find_near_contract_price(futures_df)
-    if near_price is None:
-        return pd.DataFrame()
-
-    return calculate_basis_table(
-        futures_df=futures_df,
-        spot_price=near_price,
-        reference_date=date.today(),
-    )
+    return futures_df, near_price
 
 
 def render_trend_chart(storage: BasisStorage) -> None:
@@ -147,6 +143,75 @@ def render_trend_chart(storage: BasisStorage) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
+def render_position_table(futures_df: pd.DataFrame, near_price: float) -> None:
+    """Render the position tracking table at the bottom of the page."""
+    positions = load_positions(POSITIONS_FILE)
+    if not positions:
+        return
+
+    # Build a price lookup from futures data
+    price_map = {}
+    if not futures_df.empty:
+        for _, row in futures_df.iterrows():
+            price_map[row["symbol"]] = row["current_price"]
+
+    # Handle sold positions: calculate and freeze captured_basis
+    for pos in positions:
+        if not pos["sold"] or pos["captured_basis"] is not None:
+            continue
+        current_price = price_map.get(pos["contract"])
+        if current_price is None:
+            continue
+        result = calculate_position_return(
+            position=pos,
+            current_futures_price=float(current_price),
+            current_base_price=near_price,
+        )
+        save_captured_basis(POSITIONS_FILE, pos["row_index"], result["captured_basis"])
+        logger.info(
+            "Froze captured_basis for sold position %s: %s",
+            pos["contract"], result["captured_basis"],
+        )
+
+    # Compute and display unsold position returns
+    returns = compute_position_returns(positions, price_map, near_price)
+    unsold_returns = [r for r in returns if not r["sold"]]
+    if not unsold_returns:
+        return
+
+    st.subheader("我的持仓收益")
+    display_df = pd.DataFrame(unsold_returns)
+    display_df = display_df[[
+        "contract", "buy_price", "current_price",
+        "initial_basis", "current_basis", "captured_basis",
+        "convergence_pct", "annualized_return", "pnl",
+    ]]
+    display_df = display_df.rename(columns={
+        "contract": "合约",
+        "buy_price": "买入价",
+        "current_price": "当前价",
+        "initial_basis": "初始贴水",
+        "current_basis": "当前贴水",
+        "captured_basis": "已吃贴水",
+        "convergence_pct": "收敛比例",
+        "annualized_return": "贴水年化",
+        "pnl": "合约浮盈",
+    })
+
+    for col in ["买入价", "当前价", "初始贴水", "当前贴水", "已吃贴水", "合约浮盈"]:
+        display_df[col] = display_df[col].apply(
+            lambda x: f"{x:.1f}" if pd.notna(x) else "N/A"
+        )
+    display_df["收敛比例"] = display_df["收敛比例"].apply(
+        lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A"
+    )
+    display_df["贴水年化"] = display_df["贴水年化"].apply(
+        lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A"
+    )
+
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+
 def main():
     st.set_page_config(
         page_title="铁矿石贴水计算器",
@@ -170,8 +235,16 @@ def main():
     with st.spinner("正在获取数据..."):
         near_price = save_today_data(storage)
 
-    # Build real-time basis table
-    basis_table = get_realtime_basis_table() if near_price else pd.DataFrame()
+    # Fetch real-time data (single fetch for basis table + position table)
+    futures_df, realtime_near_price = get_realtime_data()
+    if realtime_near_price is not None:
+        near_price = realtime_near_price
+
+    basis_table = calculate_basis_table(
+        futures_df=futures_df,
+        spot_price=near_price,
+        reference_date=date.today(),
+    ) if near_price else pd.DataFrame()
 
     # Display near contract price
     if near_price is not None:
@@ -213,6 +286,10 @@ def main():
     # Trend chart
     st.subheader("贴水率走势")
     render_trend_chart(storage)
+
+    # Position tracking
+    if near_price is not None and not futures_df.empty:
+        render_position_table(futures_df, near_price)
 
     # Auto-refresh during trading hours
     if is_trading_hours():

@@ -11,9 +11,11 @@ import pandas as pd
 
 from data_fetcher import fetch_active_contracts, fetch_futures_quotes
 from calculator import calculate_basis_table
+from position import load_positions, calculate_position_return, compute_position_returns, build_position_summary, save_captured_basis
 
 
 WEBHOOK_URL = os.environ.get("WECHAT_WEBHOOK_URL")
+POSITIONS_FILE = "data/positions.xlsx"
 
 
 def _find_near_contract_price(futures_df: pd.DataFrame) -> float | None:
@@ -68,6 +70,33 @@ def build_text_message() -> str | None:
         rate = row["annualized_basis_rate"]
         rate_str = f"{rate:.2f}%" if pd.notna(rate) else "N/A"
         lines.append(f"{contract} {fp:.1f} 贴水{rate_str} {days}天")
+
+    # Position tracking summary
+    positions = load_positions(POSITIONS_FILE)
+    if positions:
+        price_map = {
+            row["symbol"]: float(row["current_price"])
+            for _, row in futures_df.iterrows()
+        }
+
+        # Handle sold positions: freeze captured_basis
+        for pos in positions:
+            if not pos["sold"] or pos["captured_basis"] is not None:
+                continue
+            current_price = price_map.get(pos["contract"])
+            if current_price is None:
+                continue
+            result = calculate_position_return(
+                position=pos,
+                current_futures_price=current_price,
+                current_base_price=near_price,
+            )
+            save_captured_basis(POSITIONS_FILE, pos["row_index"], result["captured_basis"])
+
+        # Build summary from all positions (including sold for total count)
+        returns = compute_position_returns(positions, price_map, near_price)
+        summary = build_position_summary(returns, total_count=len(positions))
+        lines.append(summary)
 
     return "\n".join(lines)
 
