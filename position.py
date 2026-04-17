@@ -2,7 +2,7 @@
 """Position tracking: load from Excel, calculate captured basis returns."""
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import openpyxl
@@ -37,11 +37,12 @@ def load_positions(filepath: str) -> list[dict]:
         if not contract or not buy_date_str or not buy_price:
             continue
 
-        buy_date = (
-            buy_date_str
-            if isinstance(buy_date_str, date)
-            else date.fromisoformat(str(buy_date_str))
-        )
+        if isinstance(buy_date_str, datetime):
+            buy_date = buy_date_str.date()
+        elif isinstance(buy_date_str, date):
+            buy_date = buy_date_str
+        else:
+            buy_date = date.fromisoformat(str(buy_date_str))
 
         positions.append({
             "row_index": excel_row,
@@ -81,6 +82,8 @@ def calculate_position_return(
     """Calculate captured basis metrics for a single position."""
     if reference_date is None:
         reference_date = date.today()
+    else:
+        reference_date = date.fromordinal(reference_date.toordinal()) if isinstance(reference_date, datetime) else reference_date
 
     buy_price = position["buy_price"]
     base_at_buy = position["base_price_at_buy"]
