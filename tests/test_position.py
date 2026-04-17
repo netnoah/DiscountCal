@@ -13,7 +13,7 @@ class TestLoadPositions:
         """Helper to create a test positions.xlsx with given rows."""
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "是否已卖出", "吃到贴水"])
+        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "手数", "是否已卖出", "吃到贴水"])
         for row in rows:
             ws.append(row)
         filepath = tmp_path / "positions.xlsx"
@@ -22,7 +22,7 @@ class TestLoadPositions:
 
     def test_loads_unsold_position(self, tmp_path):
         filepath = self._create_test_excel(tmp_path, [
-            ["I2609", "2026-04-10", 650.0, 720.0, "N", None],
+            ["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None],
         ])
         positions = load_positions(filepath)
         assert len(positions) == 1
@@ -31,6 +31,7 @@ class TestLoadPositions:
         assert pos["buy_date"] == date(2026, 4, 10)
         assert pos["buy_price"] == 650.0
         assert pos["base_price_at_buy"] == 720.0
+        assert pos["lots"] == 2
         assert pos["sold"] is False
         assert pos["captured_basis"] is None
         # row_index must match actual Excel row (row 2 = first data row)
@@ -38,7 +39,7 @@ class TestLoadPositions:
 
     def test_loads_sold_position_with_captured_basis(self, tmp_path):
         filepath = self._create_test_excel(tmp_path, [
-            ["I2605", "2026-03-15", 680.0, 710.0, "Y", 25.0],
+            ["I2605", "2026-03-15", 680.0, 710.0, 1, "Y", 25.0],
         ])
         positions = load_positions(filepath)
         assert len(positions) == 1
@@ -47,8 +48,8 @@ class TestLoadPositions:
 
     def test_loads_multiple_positions(self, tmp_path):
         filepath = self._create_test_excel(tmp_path, [
-            ["I2609", "2026-04-10", 650.0, 720.0, "N", None],
-            ["I2612", "2026-04-12", 630.0, 720.0, "N", None],
+            ["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None],
+            ["I2612", "2026-04-12", 630.0, 720.0, 1, "N", None],
         ])
         positions = load_positions(filepath)
         assert len(positions) == 2
@@ -68,10 +69,10 @@ class TestLoadPositions:
     def test_skips_rows_with_missing_fields(self, tmp_path):
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "是否已卖出", "吃到贴水"])
-        ws.append(["I2609", "2026-04-10", 650.0, 720.0, "N", None])
-        ws.append(["", "", "", "", "", ""])  # empty row — should be skipped
-        ws.append(["I2612", "2026-04-12", 630.0, 720.0, "N", None])
+        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "手数", "是否已卖出", "吃到贴水"])
+        ws.append(["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None])
+        ws.append(["", "", "", "", "", "", ""])  # empty row — should be skipped
+        ws.append(["I2612", "2026-04-12", 630.0, 720.0, 1, "N", None])
         filepath = tmp_path / "positions.xlsx"
         wb.save(filepath)
         positions = load_positions(str(filepath))
@@ -86,7 +87,7 @@ class TestSaveCapturedBasis:
     def _create_test_excel(self, tmp_path, rows):
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "是否已卖出", "吃到贴水"])
+        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "手数", "是否已卖出", "吃到贴水"])
         for row in rows:
             ws.append(row)
         filepath = tmp_path / "positions.xlsx"
@@ -95,8 +96,8 @@ class TestSaveCapturedBasis:
 
     def test_writes_value_to_correct_cell(self, tmp_path):
         filepath = self._create_test_excel(tmp_path, [
-            ["I2609", "2026-04-10", 650.0, 720.0, "N", None],
-            ["I2605", "2026-03-15", 680.0, 710.0, "Y", None],
+            ["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None],
+            ["I2605", "2026-03-15", 680.0, 710.0, 1, "Y", None],
         ])
         save_captured_basis(filepath, row_index=3, value=25.0)
 
@@ -112,7 +113,7 @@ class TestSaveCapturedBasis:
 
     def test_overwrites_existing_value(self, tmp_path):
         filepath = self._create_test_excel(tmp_path, [
-            ["I2605", "2026-03-15", 680.0, 710.0, "Y", 15.0],
+            ["I2605", "2026-03-15", 680.0, 710.0, 1, "Y", 15.0],
         ])
         save_captured_basis(filepath, row_index=2, value=25.0)
 
@@ -128,6 +129,7 @@ class TestCalculatePositionReturn:
             "buy_date": date(2026, 4, 10),
             "buy_price": 650.0,
             "base_price_at_buy": 720.0,
+            "lots": 2,
             "sold": False,
             "captured_basis": None,
         }
@@ -152,7 +154,7 @@ class TestCalculatePositionReturn:
         assert result["holding_days"] == 15
         expected_annualized = 5 / 650 * 365 / 15 * 100
         assert abs(result["annualized_return"] - expected_annualized) < 0.01
-        assert result["pnl"] == 15.0
+        assert result["pnl"] == 3000.0  # (665-650) * 100 * 2 lots
 
     def test_zero_holding_days_returns_none_annualized(self):
         pos = self._make_position(buy_date=date(2026, 4, 25))
@@ -198,7 +200,7 @@ class TestBuildPositionSummary:
                 "captured_basis": 5.0,
                 "convergence_pct": 7.14,
                 "annualized_return": 18.72,
-                "pnl": 15.0,
+                "pnl": 1500.0,
                 "sold": False,
             },
             {
@@ -208,7 +210,7 @@ class TestBuildPositionSummary:
                 "captured_basis": 10.0,
                 "convergence_pct": 66.67,
                 "annualized_return": 98.17,
-                "pnl": 15.0,
+                "pnl": 1500.0,
                 "sold": False,
             },
         ]
@@ -224,6 +226,7 @@ class TestBuildPositionSummary:
         assert result == ""
 
     def test_hides_sold_positions_in_detail(self):
+        # Only unsold positions are passed in (caller filters sold)
         returns = [
             {
                 "contract": "I2609",
@@ -232,23 +235,12 @@ class TestBuildPositionSummary:
                 "captured_basis": 5.0,
                 "convergence_pct": 7.14,
                 "annualized_return": 18.72,
-                "pnl": 15.0,
+                "pnl": 1500.0,
                 "sold": False,
-            },
-            {
-                "contract": "I2605",
-                "buy_price": 680.0,
-                "current_price": 700.0,
-                "captured_basis": 20.0,
-                "convergence_pct": 100.0,
-                "annualized_return": 50.0,
-                "pnl": 20.0,
-                "sold": True,
             },
         ]
         result = build_position_summary(returns, total_count=2)
         assert "I2609" in result
-        assert "I2605" not in result
         assert "持仓数: 2" in result
         assert "未平仓: 1" in result
 
@@ -257,27 +249,25 @@ class TestComputePositionReturns:
     def test_filters_unsold_and_matches_prices(self, tmp_path):
         positions = [
             {"row_index": 2, "contract": "I2609", "buy_date": date(2026, 4, 10),
-             "buy_price": 650.0, "base_price_at_buy": 720.0, "sold": False, "captured_basis": None},
+             "buy_price": 650.0, "base_price_at_buy": 720.0, "lots": 1, "sold": False, "captured_basis": None},
             {"row_index": 3, "contract": "I2605", "buy_date": date(2026, 3, 15),
-             "buy_price": 680.0, "base_price_at_buy": 710.0, "sold": True, "captured_basis": None},
+             "buy_price": 680.0, "base_price_at_buy": 710.0, "lots": 1, "sold": True, "captured_basis": None},
             {"row_index": 4, "contract": "I2612", "buy_date": date(2026, 4, 12),
-             "buy_price": 630.0, "base_price_at_buy": 720.0, "sold": False, "captured_basis": None},
+             "buy_price": 630.0, "base_price_at_buy": 720.0, "lots": 1, "sold": False, "captured_basis": None},
         ]
         price_map = {"I2609": 665.0, "I2612": 635.0, "I2605": 700.0}
         near_price = 730.0
 
         returns = compute_position_returns(positions, price_map, near_price)
-        assert len(returns) == 3  # 2 unsold + 1 sold without captured_basis
-        unsold = [r for r in returns if not r["sold"]]
-        assert len(unsold) == 2
+        # Sold positions are skipped entirely
+        assert len(returns) == 2
         assert returns[0]["contract"] == "I2609"
-        assert returns[1]["contract"] == "I2605"
-        assert returns[2]["contract"] == "I2612"
+        assert returns[1]["contract"] == "I2612"
 
     def test_skips_positions_with_no_matching_price(self):
         positions = [
             {"row_index": 2, "contract": "I2701", "buy_date": date(2026, 4, 10),
-             "buy_price": 600.0, "base_price_at_buy": 700.0, "sold": False, "captured_basis": None},
+             "buy_price": 600.0, "base_price_at_buy": 700.0, "lots": 1, "sold": False, "captured_basis": None},
         ]
         price_map = {"I2609": 665.0}
         near_price = 730.0
@@ -288,7 +278,7 @@ class TestComputePositionReturns:
     def test_skips_sold_with_frozen_captured_basis(self):
         positions = [
             {"row_index": 2, "contract": "I2605", "buy_date": date(2026, 3, 15),
-             "buy_price": 680.0, "base_price_at_buy": 710.0, "sold": True, "captured_basis": 25.0},
+             "buy_price": 680.0, "base_price_at_buy": 710.0, "lots": 1, "sold": True, "captured_basis": 25.0},
         ]
         price_map = {"I2605": 700.0}
         near_price = 730.0

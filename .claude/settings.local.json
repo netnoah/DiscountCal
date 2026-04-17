@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "mcp__zai-mcp-server__analyze_image",
-      "Bash(python -c \":*)"
+      "Bash(python -c \":*)",
+      "Bash(python -m pytest tests/test_position.py -v)"
     ]
   }
 }

@@ -11,7 +11,7 @@ import pandas as pd
 
 from data_fetcher import fetch_active_contracts, fetch_futures_quotes
 from calculator import calculate_basis_table
-from position import load_positions, calculate_position_return, compute_position_returns, build_position_summary, save_captured_basis
+from position import load_positions, calculate_position_return, compute_position_returns, build_position_summary
 
 
 WEBHOOK_URL = os.environ.get("WECHAT_WEBHOOK_URL")
@@ -79,22 +79,9 @@ def build_text_message() -> str | None:
             for _, row in futures_df.iterrows()
         }
 
-        # Handle sold positions: freeze captured_basis
-        for pos in positions:
-            if not pos["sold"] or pos["captured_basis"] is not None:
-                continue
-            current_price = price_map.get(pos["contract"])
-            if current_price is None:
-                continue
-            result = calculate_position_return(
-                position=pos,
-                current_futures_price=current_price,
-                current_base_price=near_price,
-            )
-            save_captured_basis(POSITIONS_FILE, pos["row_index"], result["captured_basis"])
-
-        # Build summary from all positions (including sold for total count)
-        returns = compute_position_returns(positions, price_map, near_price)
+        # GitHub Actions 环境: 跳过写回操作，仅计算通知内容
+        unsold = [p for p in positions if not p["sold"]]
+        returns = compute_position_returns(unsold, price_map, near_price)
         summary = build_position_summary(returns, total_count=len(positions))
         lines.append(summary)
 

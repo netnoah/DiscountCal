@@ -13,7 +13,7 @@ from data_fetcher import (
     fetch_futures_quotes,
 )
 from storage import BasisStorage
-from position import load_positions, calculate_position_return, compute_position_returns, save_captured_basis
+from position import load_positions, compute_position_returns, save_captured_basis
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -155,26 +155,22 @@ def render_position_table(futures_df: pd.DataFrame, near_price: float) -> None:
         for _, row in futures_df.iterrows():
             price_map[row["symbol"]] = row["current_price"]
 
-    # Handle sold positions: calculate and freeze captured_basis
-    for pos in positions:
-        if not pos["sold"] or pos["captured_basis"] is not None:
-            continue
-        current_price = price_map.get(pos["contract"])
-        if current_price is None:
-            continue
-        result = calculate_position_return(
-            position=pos,
-            current_futures_price=float(current_price),
-            current_base_price=near_price,
-        )
-        save_captured_basis(POSITIONS_FILE, pos["row_index"], result["captured_basis"])
-        logger.info(
-            "Froze captured_basis for sold position %s: %s",
-            pos["contract"], result["captured_basis"],
-        )
+    # Skip sold positions entirely
+    active_positions = [p for p in positions if not p["sold"]]
 
-    # Compute and display unsold position returns
-    returns = compute_position_returns(positions, price_map, near_price)
+    # Compute returns for active positions
+    returns = compute_position_returns(active_positions, price_map, near_price)
+
+    # Write back captured_basis to Excel
+    for r in returns:
+        pos = next(
+            (p for p in active_positions if p["contract"] == r["contract"]), None
+        )
+        if pos is None:
+            continue
+        save_captured_basis(POSITIONS_FILE, pos["row_index"], r["captured_basis"])
+
+    # Display unsold positions only
     unsold_returns = [r for r in returns if not r["sold"]]
     if not unsold_returns:
         return
