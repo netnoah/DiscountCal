@@ -13,7 +13,7 @@ from data_fetcher import (
     fetch_futures_quotes,
 )
 from storage import BasisStorage
-from position import load_positions, compute_position_returns, save_captured_basis
+from position import load_positions, compute_position_returns, save_position_result
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -161,14 +161,14 @@ def render_position_table(futures_df: pd.DataFrame, near_price: float) -> None:
     # Compute returns for active positions
     returns = compute_position_returns(active_positions, price_map, near_price)
 
-    # Write back captured_basis to Excel
+    # Write back all calculated fields to Excel
     for r in returns:
         pos = next(
             (p for p in active_positions if p["contract"] == r["contract"]), None
         )
         if pos is None:
             continue
-        save_captured_basis(POSITIONS_FILE, pos["row_index"], r["captured_basis"])
+        save_position_result(POSITIONS_FILE, pos["row_index"], r)
 
     # Display unsold positions only
     unsold_returns = [r for r in returns if not r["sold"]]

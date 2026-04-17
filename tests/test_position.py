@@ -5,7 +5,7 @@ from pathlib import Path
 
 import openpyxl
 
-from position import load_positions, save_captured_basis, calculate_position_return, build_position_summary, compute_position_returns
+from position import load_positions, save_position_result, calculate_position_return, build_position_summary, compute_position_returns
 
 
 class TestLoadPositions:
@@ -13,7 +13,8 @@ class TestLoadPositions:
         """Helper to create a test positions.xlsx with given rows."""
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "手数", "是否已卖出", "吃到贴水"])
+        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "手数", "是否已卖出",
+                    "当前价", "当前贴水", "已吃贴水", "收敛比例", "贴水年化", "合约浮盈"])
         for row in rows:
             ws.append(row)
         filepath = tmp_path / "positions.xlsx"
@@ -22,7 +23,7 @@ class TestLoadPositions:
 
     def test_loads_unsold_position(self, tmp_path):
         filepath = self._create_test_excel(tmp_path, [
-            ["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None],
+            ["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None, None, None, None, None, None],
         ])
         positions = load_positions(filepath)
         assert len(positions) == 1
@@ -33,23 +34,21 @@ class TestLoadPositions:
         assert pos["base_price_at_buy"] == 720.0
         assert pos["lots"] == 2
         assert pos["sold"] is False
-        assert pos["captured_basis"] is None
         # row_index must match actual Excel row (row 2 = first data row)
         assert pos["row_index"] == 2
 
     def test_loads_sold_position_with_captured_basis(self, tmp_path):
         filepath = self._create_test_excel(tmp_path, [
-            ["I2605", "2026-03-15", 680.0, 710.0, 1, "Y", 25.0],
+            ["I2605", "2026-03-15", 680.0, 710.0, 1, "Y", None, None, 25.0, None, None, None],
         ])
         positions = load_positions(filepath)
         assert len(positions) == 1
         assert positions[0]["sold"] is True
-        assert positions[0]["captured_basis"] == 25.0
 
     def test_loads_multiple_positions(self, tmp_path):
         filepath = self._create_test_excel(tmp_path, [
-            ["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None],
-            ["I2612", "2026-04-12", 630.0, 720.0, 1, "N", None],
+            ["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None, None, None, None, None, None],
+            ["I2612", "2026-04-12", 630.0, 720.0, 1, "N", None, None, None, None, None, None],
         ])
         positions = load_positions(filepath)
         assert len(positions) == 2
@@ -69,10 +68,11 @@ class TestLoadPositions:
     def test_skips_rows_with_missing_fields(self, tmp_path):
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "手数", "是否已卖出", "吃到贴水"])
-        ws.append(["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None])
-        ws.append(["", "", "", "", "", "", ""])  # empty row — should be skipped
-        ws.append(["I2612", "2026-04-12", 630.0, 720.0, 1, "N", None])
+        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "手数", "是否已卖出",
+                    "当前价", "当前贴水", "已吃贴水", "收敛比例", "贴水年化", "合约浮盈"])
+        ws.append(["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None, None, None, None, None, None])
+        ws.append([""] * 12)  # empty row — should be skipped
+        ws.append(["I2612", "2026-04-12", 630.0, 720.0, 1, "N", None, None, None, None, None, None])
         filepath = tmp_path / "positions.xlsx"
         wb.save(filepath)
         positions = load_positions(str(filepath))
@@ -83,42 +83,59 @@ class TestLoadPositions:
         assert positions[1]["row_index"] == 4
 
 
-class TestSaveCapturedBasis:
+class TestSavePositionResult:
     def _create_test_excel(self, tmp_path, rows):
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "手数", "是否已卖出", "吃到贴水"])
+        ws.append(["合约", "买入日期", "买入价格", "买入时基准价", "手数", "是否已卖出",
+                    "当前价", "当前贴水", "已吃贴水", "收敛比例", "贴水年化", "合约浮盈"])
         for row in rows:
             ws.append(row)
         filepath = tmp_path / "positions.xlsx"
         wb.save(filepath)
         return str(filepath)
 
-    def test_writes_value_to_correct_cell(self, tmp_path):
-        filepath = self._create_test_excel(tmp_path, [
-            ["I2609", "2026-04-10", 650.0, 720.0, 2, "N", None],
-            ["I2605", "2026-03-15", 680.0, 710.0, 1, "Y", None],
-        ])
-        save_captured_basis(filepath, row_index=3, value=25.0)
+    def _make_result(self, **overrides):
+        defaults = {
+            "current_price": 665.0, "current_basis": 65.0, "captured_basis": 5.0,
+            "convergence_pct": 7.14, "annualized_return": 18.72, "pnl": 3000.0,
+        }
+        defaults.update(overrides)
+        return defaults
 
-        # Verify written value
-        positions = load_positions(filepath)
-        sold_pos = [p for p in positions if p["sold"]][0]
-        assert sold_pos["captured_basis"] == 25.0
+    def test_writes_all_fields(self, tmp_path):
+        filepath = self._create_test_excel(tmp_path, [
+            ["I2609", "2026-04-10", 650.0, 720.0, 2, "N"] + [None] * 6,
+        ])
+        result = self._make_result()
+        save_position_result(filepath, row_index=2, result=result)
+
+        wb = openpyxl.load_workbook(filepath)
+        ws = wb.active
+        assert ws.cell(row=2, column=7).value == 665.0   # 当前价
+        assert ws.cell(row=2, column=8).value == 65.0     # 当前贴水
+        assert ws.cell(row=2, column=9).value == 5.0      # 已吃贴水
+        assert ws.cell(row=2, column=10).value == "7.1%"   # 收敛比例
+        assert ws.cell(row=2, column=11).value == "18.72%"  # 贴水年化
+        assert ws.cell(row=2, column=12).value == 3000.0   # 合约浮盈
+        wb.close()
 
     def test_does_not_crash_on_missing_file(self, tmp_path):
         filepath = str(tmp_path / "nonexistent.xlsx")
-        # Should not raise
-        save_captured_basis(filepath, row_index=2, value=10.0)
+        save_position_result(filepath, row_index=2, result=self._make_result())
 
-    def test_overwrites_existing_value(self, tmp_path):
+    def test_handles_none_values(self, tmp_path):
         filepath = self._create_test_excel(tmp_path, [
-            ["I2605", "2026-03-15", 680.0, 710.0, 1, "Y", 15.0],
+            ["I2609", "2026-04-10", 650.0, 720.0, 2, "N"] + [None] * 6,
         ])
-        save_captured_basis(filepath, row_index=2, value=25.0)
+        result = self._make_result(convergence_pct=None, annualized_return=None)
+        save_position_result(filepath, row_index=2, result=result)
 
-        positions = load_positions(filepath)
-        assert positions[0]["captured_basis"] == 25.0
+        wb = openpyxl.load_workbook(filepath)
+        ws = wb.active
+        assert ws.cell(row=2, column=10).value is None
+        assert ws.cell(row=2, column=11).value is None
+        wb.close()
 
 
 class TestCalculatePositionReturn:
