@@ -33,22 +33,23 @@
 ## 数据流
 
 ```
-AKShare API → data_fetcher.py → calculator.py → app.py (展示) + storage.py (SQLite)
-                                              → notify.py (企业微信推送)
+AKShare API → src/data_fetcher.py → src/calculator.py → src/app.py (展示) + src/storage.py (SQLite)
+                                                         → src/notify.py (企业微信推送)
 ```
 
 ## 项目结构
 
 ```
-├── app.py            # Streamlit 主页面
-├── calculator.py     # 年化贴水率纯函数计算
-├── data_fetcher.py   # AKShare 数据获取隔离层
-├── storage.py        # SQLite 历史数据持久化
-├── position.py       # 持仓管理（Excel 读写 + 收益计算）
-├── notify.py         # 企业微信 Webhook 推送
-├── requirements.txt  # Python 依赖
-├── data/             # SQLite 数据库（自动创建）
-├── tests/            # 单元测试
+├── src/                # 源代码
+│   ├── app.py          # Streamlit 主页面
+│   ├── calculator.py   # 年化贴水率纯函数计算
+│   ├── data_fetcher.py # AKShare 数据获取隔离层
+│   ├── storage.py      # SQLite 历史数据持久化
+│   ├── position.py     # 持仓管理（Excel 读写 + 收益计算）
+│   └── notify.py       # 企业微信 Webhook 推送
+├── requirements.txt    # Python 依赖
+├── data/               # SQLite 数据库（自动创建）
+├── tests/              # 单元测试
 └── .github/workflows/daily-basis.yml  # 每日定时推送
 ```
 
@@ -63,7 +64,7 @@ pip install -r requirements.txt
 ### 启动应用
 
 ```bash
-streamlit run app.py
+streamlit run src/app.py
 ```
 
 默认运行在 `http://localhost:8501`。
@@ -96,7 +97,7 @@ pytest tests/ -v
 
 - **基准价**：使用最近交割月合约价格，非外部现货价
 - **交割日**：近似为合约月 15 日（实际为交割月第 10 个交易日）
-- **AKShare 版本**：API 可能随版本变化，`data_fetcher.py` 作为隔离层便于维护
+- **AKShare 版本**：API 可能随版本变化，`src/data_fetcher.py` 作为隔离层便于维护
 
 ## 技术栈
 

@@ -23,4 +23,4 @@ jobs:
       - name: Fetch data and send notification
         env:
           WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
-        run: python notify.py
+        run: python src/notify.py
